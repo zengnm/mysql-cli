@@ -1,14 +1,14 @@
 package main
 
 import (
-	"bufio"
 	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/chzyer/readline"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/liushuochen/gotable"
-	"os"
+	"io"
 	"regexp"
 	"strings"
 	"time"
@@ -128,13 +128,26 @@ func printTable(columns []string, results []map[string]string) {
 	fmt.Println(table)
 }
 
-func readLine() string {
-	reader := bufio.NewReader(os.Stdin)
-	line, _, err := reader.ReadLine()
-	if err != nil {
-		return ""
+func filterInput(r rune) (rune, bool) {
+	switch r {
+	// block CtrlZ feature
+	case readline.CharCtrlZ:
+		return r, false
 	}
-	return string(line)
+	return r, true
+}
+
+func initReadline() (*readline.Instance, error) {
+	return readline.NewEx(&readline.Config{
+		Prompt:          "\033[31m" + database + " »\033[0m ",
+		HistoryFile:     "/tmp/readline.tmp",
+		AutoComplete:    nil,
+		InterruptPrompt: "^C",
+		EOFPrompt:       "exit",
+
+		HistorySearchFold:   true,
+		FuncFilterInputRune: filterInput,
+	})
 }
 
 func main() {
@@ -146,14 +159,31 @@ func main() {
 	}
 	defer db.Close()
 
+	l, err := initReadline()
+	if err != nil {
+		panic(err)
+	}
+	defer l.Close()
+	l.CaptureExitSignal()
+
 	for true {
-		fmt.Printf("%s> ", database)
-		cmdline := readLine()
-		if "quit" == cmdline || "exit" == cmdline {
+		line, err := l.Readline()
+		if err == readline.ErrInterrupt {
+			if len(line) == 0 {
+				break
+			} else {
+				continue
+			}
+		} else if err == io.EOF {
+			break
+		}
+
+		line = strings.TrimSpace(line)
+		if "quit" == line || "exit" == line {
 			return
 		}
-		if "" != cmdline {
-			queryAny(db, cmdline)
+		if "" != line {
+			queryAny(db, line)
 		}
 	}
 }
