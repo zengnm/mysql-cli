@@ -20,6 +20,8 @@ var host string
 var port string
 var database string
 
+var tables [][]rune
+
 func parseFlag() {
 	flag.StringVar(&username, "u", "root", "用户名，默认为root")
 	flag.StringVar(&password, "p", "", "密码，默认为空")
@@ -47,22 +49,36 @@ func initDB() *sql.DB {
 	return DB
 }
 
+func setTables(db *sql.DB) error {
+	rows, err := db.Query("show tables")
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	columns, list := parseRows(rows)
+	for _, row := range list {
+		tables = append(tables, []rune(row[columns[0]]))
+	}
+	return nil
+}
+
 func queryAny(db *sql.DB, cmdline string) {
-	sql := cmdline
+	executeSql := cmdline
 	jsonFmt := false
 
 	compile := regexp.MustCompile(`(.*)\\json\s*;?`)
 	submatch := compile.FindStringSubmatch(cmdline)
 	if len(submatch) > 0 {
 		jsonFmt = true
-		sql = submatch[1]
+		executeSql = submatch[1]
 	}
 
 	if strings.HasSuffix(cmdline, "\\json") {
 		jsonFmt = true
 	}
 
-	rows, err := db.Query(sql)
+	rows, err := db.Query(executeSql)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -112,10 +128,14 @@ func parseRows(rows *sql.Rows) ([]string, []map[string]string) {
 }
 
 func printJson(_ []string, results []map[string]string) {
+	fmt.Println("[")
+	var elems []string
 	for _, v := range results {
 		marshal, _ := json.Marshal(v)
-		fmt.Println(string(marshal))
+		elems = append(elems, string(marshal))
 	}
+	println(strings.Join(elems, ",\n"))
+	fmt.Println("]")
 }
 
 func printTable(columns []string, results []map[string]string) {
@@ -137,11 +157,16 @@ func filterInput(r rune) (rune, bool) {
 	return r, true
 }
 
+var completer = readline.SegmentFunc(func(segment [][]rune, idx int) (cands [][]rune) {
+	cands = append(cands, tables...)
+	return cands
+})
+
 func initReadline() (*readline.Instance, error) {
 	return readline.NewEx(&readline.Config{
-		Prompt:          "\033[31m" + database + " »\033[0m ",
+		Prompt:          "\033[32m" + database + " »\033[0m ",
 		HistoryFile:     "/tmp/readline.tmp",
-		AutoComplete:    nil,
+		AutoComplete:    completer,
 		InterruptPrompt: "^C",
 		EOFPrompt:       "exit",
 
@@ -158,6 +183,10 @@ func main() {
 		return
 	}
 	defer db.Close()
+
+	if setTables(db) != nil {
+		return
+	}
 
 	l, err := initReadline()
 	if err != nil {
@@ -179,9 +208,6 @@ func main() {
 		}
 
 		line = strings.TrimSpace(line)
-		if "quit" == line || "exit" == line {
-			return
-		}
 		if "" != line {
 			queryAny(db, line)
 		}
