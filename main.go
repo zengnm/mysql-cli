@@ -19,6 +19,7 @@ var password string
 var host string
 var port string
 var database string
+var executeCmd string
 
 var tables [][]rune
 
@@ -28,6 +29,7 @@ func parseFlag() {
 	flag.StringVar(&host, "h", "localhost", "主机名，默认为localhost")
 	flag.StringVar(&port, "P", "3306", "端口号，默认为3306")
 	flag.StringVar(&database, "D", "test", "数据库，默认为test")
+	flag.StringVar(&executeCmd, "e", "", "数据库，默认为空")
 	flag.Parse()
 }
 
@@ -65,17 +67,11 @@ func setTables(db *sql.DB) error {
 
 func queryAny(db *sql.DB, cmdline string) {
 	executeSql := cmdline
-	jsonFmt := false
 
-	compile := regexp.MustCompile(`(.*)\\json\s*;?`)
+	compile := regexp.MustCompile(`(.*)\\[json|table]\s*;?`)
 	submatch := compile.FindStringSubmatch(cmdline)
 	if len(submatch) > 0 {
-		jsonFmt = true
 		executeSql = submatch[1]
-	}
-
-	if strings.HasSuffix(cmdline, "\\json") {
-		jsonFmt = true
 	}
 
 	rows, err := db.Query(executeSql)
@@ -90,12 +86,14 @@ func queryAny(db *sql.DB, cmdline string) {
 		return
 	}
 
-	if jsonFmt {
+	cmdline = strings.TrimSpace(cmdline)
+	if strings.HasSuffix(cmdline, "\\json") {
 		printJson(columns, results)
-	} else {
+	} else if strings.HasSuffix(cmdline, "\\table") {
 		printTable(columns, results)
+	} else {
+		printSimple(columns, results)
 	}
-
 }
 
 func parseRows(rows *sql.Rows) ([]string, []map[string]string) {
@@ -148,6 +146,16 @@ func printTable(columns []string, results []map[string]string) {
 	fmt.Println(table)
 }
 
+func printSimple(columns []string, results []map[string]string) {
+	for _, m := range results {
+		var elems []string
+		for _, col := range columns {
+			elems = append(elems, m[col])
+		}
+		println(strings.Join(elems, "\t"))
+	}
+}
+
 func filterInput(r rune) (rune, bool) {
 	switch r {
 	// block CtrlZ feature
@@ -183,6 +191,11 @@ func main() {
 		return
 	}
 	defer db.Close()
+	// 立即执行非交互式
+	if executeCmd != "" {
+		queryAny(db, executeCmd)
+		return
+	}
 
 	if setTables(db) != nil {
 		return
@@ -208,6 +221,9 @@ func main() {
 		}
 
 		line = strings.TrimSpace(line)
+		if "quit" == line || "exit" == line {
+			return
+		}
 		if "" != line {
 			queryAny(db, line)
 		}
